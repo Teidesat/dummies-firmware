@@ -5,25 +5,25 @@
 
 //==============================================================================
 
-#define LIGHT_PIN (15) // ESP32 Pin to send light pulses
-#define DEBUG_LED_PIN (16) // ESP32 Pin of small LED for debugging
+#define LIGHT_PIN (18) // ESP32 Pin to send light pulses
+#define DEBUG_LED_PIN (19) // ESP32 Pin for debugging
 
 //==============================================================================
 
-const char* ssid = "xxxxxx";
-const char* password = "xxxxxx";
+const char* wifiSsid = "xxxxxx";
+const char* wifiPassword = "xxxxxx";
 
-String base_url = "http://transmitter-dummy:5000";
+String apiServerBaseUrl = "http://xxxxxx:5000"; // Change to server's ip address
 
-String url_send = base_url + "/send";
-String url_frequency = base_url + "/frequency";
-String url_data = base_url + "/data";
+String sendModeUrl = apiServerBaseUrl + "/get_send_mode";
+String blinkingFrequencyUrl = apiServerBaseUrl + "/get_blinking_frequency";
+String messageDataUrl = apiServerBaseUrl + "/get_message_data";
 
 //==============================================================================
 
-void send_string(float frequency, String& data);
-void send_binary(float frequency, uint8_t* data, int data_size);
-String get_request(WiFiClient& client, HTTPClient& http, String URL);
+void send_string(float blinkingFrequency, String& messageData);
+void send_binary(float blinkingFrequency, uint8_t* messageData, int dataSize);
+String get_request(WiFiClient& wifiClient, HTTPClient& httpClient, String target_url);
 
 //==============================================================================
 
@@ -33,7 +33,7 @@ void setup() {
 
   Serial.begin(9600);
 
-  WiFi.begin(ssid, password);
+  WiFi.begin(wifiSsid, wifiPassword);
   Serial.print("Connecting to WiFi...");
   while (WiFi.status() != WL_CONNECTED) {
     Serial.print('.');
@@ -43,74 +43,89 @@ void setup() {
 }
 
 void loop() {
-  WiFiClient client;
-  HTTPClient http;
+  WiFiClient wifiClient;
+  HTTPClient httpClient;
 
-  String payload;
-  payload = get_request(client, http, url_send);
+  String sendMode;
+  sendMode = get_request(wifiClient, httpClient, sendModeUrl);
 
-  if (payload == "Error") {
-    Serial.println("Error getting payload");
+  if (sendMode == "Error") {
+    Serial.println("Error getting send mode");
     return;
   }
-
-  if (payload == "send_string") {
-    String frequency = get_request(client, http, url_frequency);
-    if (frequency == "Error") {
-      Serial.println("Error getting frequency");
-      return;
-    }
-
-    String data = get_request(client, http, url_data);
-    if (data == "Error") {
-      Serial.println("Error getting data");
-      return;
-    }
-
-    send_string(frequency.toFloat(), data);
+  else {
+    Serial.println("Send mode: " + sendMode);
   }
 
-  if (payload == "send_binary") {
-    String frequency = get_request(client, http, url_frequency);
-    if (frequency == "Error") {
-      Serial.println("Error getting frequency");
+  if (sendMode == "send_string") {
+    String blinkingFrequency = get_request(wifiClient, httpClient, blinkingFrequencyUrl);
+    if (blinkingFrequency == "Error") {
+      Serial.println("Error getting blinking frequency");
       return;
     }
+    else {
+      Serial.println("Frequency: " + blinkingFrequency);
+    }
 
-    String data = get_request(client, http, url_data);
-    if (data == "Error") {
-      Serial.println("Error getting data");
+    String messageData = get_request(wifiClient, httpClient, messageDataUrl);
+    if (messageData == "Error") {
+      Serial.println("Error getting message data");
       return;
     }
-
-    int data_size = data.length();
-    uint8_t data_bytes[data_size];
-    for (int i = 0; i < data_size; i++) {
-      data_bytes[i] = data[i] - '0';
+    else {
+      Serial.println("Data: " + messageData);
     }
 
-    send_binary(frequency.toFloat(), data_bytes, data_size);
+    send_string(blinkingFrequency.toFloat(), messageData);
+  }
+
+  if (sendMode == "send_binary") {
+    String blinkingFrequency = get_request(wifiClient, httpClient, blinkingFrequencyUrl);
+    if (blinkingFrequency == "Error") {
+      Serial.println("Error getting blinking frequency");
+      return;
+    }
+    else {
+      Serial.println("Frequency: " + blinkingFrequency);
+    }
+
+    String messageData = get_request(wifiClient, httpClient, messageDataUrl);
+    if (messageData == "Error") {
+      Serial.println("Error getting message data");
+      return;
+    }
+    else {
+      Serial.println("Data: " + messageData);
+    }
+
+    int dataSize = messageData.length();
+    uint8_t dataBytes[dataSize];
+    for (int i = 0; i < dataSize; i++) {
+      dataBytes[i] = messageData[i] - '0';
+    }
+
+    send_binary(blinkingFrequency.toFloat(), dataBytes, dataSize);
   }
 }
 
 //==============================================================================
 
-void send_string(float frequency, String& data) {
+void send_string(float blinkingFrequency, String& messageData) {
   digitalWrite(DEBUG_LED_PIN, HIGH);
-  Serial.println("Sending data");
+  Serial.println("Sending message data");
 
-  unsigned long bit_time = 1000000 / frequency; // Time in microseconds for each bit
-  unsigned long start_time = micros();
+  unsigned long bitWaitTime = 1000000 / blinkingFrequency; // Time in microseconds for each bit
+  unsigned long startTime = micros();
 
-  int data_size = data.length();
-  for (int i = 0; i < data_size; i++) {
-    uint8_t byte = data[i]; // Character of the data string
+  int dataSize = messageData.length();
+  for (int i = 0; i < dataSize; i++) {
+    uint8_t byte = messageData[i]; // Character of the message data string
 
     for (int j = 7; j >= 0; j--) {
       digitalWrite(LIGHT_PIN, (byte >> j) & 1); // Send the bit
 
-      while (micros() - start_time < bit_time); // Wait for the bit time to pass
-      start_time += bit_time;
+      while ((micros() - startTime) < bitWaitTime); // Wait for the bit time to pass
+      startTime += bitWaitTime;
     }
   }
 
@@ -118,42 +133,46 @@ void send_string(float frequency, String& data) {
   digitalWrite(DEBUG_LED_PIN, LOW);
 }
 
-void send_binary(float frequency, uint8_t* data, int data_size) {
+void send_binary(float blinkingFrequency, uint8_t* messageData, int dataSize) {
   digitalWrite(DEBUG_LED_PIN, HIGH);
-  Serial.println("Sending data");
+  Serial.println("Sending message data");
 
-  unsigned long bit_time = 1000000 / frequency; // Time in microseconds for each bit
-  unsigned long start_time = micros();
+  unsigned long bitWaitTime = 1000000 / blinkingFrequency; // Time in microseconds for each bit
+  unsigned long startTime = micros();
 
-  for (int i = 0; i < data_size; i++) {
-    digitalWrite(LIGHT_PIN, data[i] ? HIGH : LOW); // Send the bit
+  for (int i = 0; i < dataSize; i++) {
+    digitalWrite(LIGHT_PIN, messageData[i] ? HIGH : LOW); // Send the bit
 
-    while (micros() - start_time < bit_time); // Wait for the bit time to pass
-    start_time += bit_time;
+    while ((micros() - startTime) < bitWaitTime); // Wait for the bit time to pass
+    startTime += bitWaitTime;
   }
 
   Serial.println("Data sent");
   digitalWrite(DEBUG_LED_PIN, LOW);
 }
 
-String get_request(WiFiClient& client, HTTPClient& http, String URL) {
+String get_request(WiFiClient& wifiClient, HTTPClient& httpClient, String target_url) {
   Serial.println("Sending http request");
-  if (http.begin(client, URL)) {
+  if (httpClient.begin(wifiClient, target_url)) {
     Serial.println("URL initialized");
   }
 
-  int httpCode = http.GET();
-  if (httpCode > 0) {
-    Serial.printf("[HTTP] GET ... code: %d", httpCode);
+  int responseCode = httpClient.GET();
+  if (responseCode > 0) {
+    Serial.printf("[HTTP] GET... code: %d", responseCode);
 
-    if (httpCode == HTTP_CODE_OK) {
-      String payload = http.getString();
-      Serial.println("Reveived payload: " + payload);
-      return payload;
-    } else {
-      Serial.printf("ERROR: %s", http.errorToString(httpCode).c_str());
+    if (responseCode == HTTP_CODE_OK) {
+      String responsePayload = httpClient.getString();
+      Serial.println("Received payload: " + responsePayload);
+      return responsePayload;
+    }
+    else {
+      Serial.printf("ERROR: %s", httpClient.errorToString(responseCode).c_str());
       return "Error";
     }
+  }
+  else {
+    Serial.printf("[HTTP] GET... failed, error: %s\n", httpClient.errorToString(responseCode).c_str());
   }
 
   return "Error";
