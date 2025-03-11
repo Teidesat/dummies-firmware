@@ -71,30 +71,32 @@ void IRAM_ATTR spi_callback(spi_transaction_t *trans) {
 
 void setupSPI() {
   spi_bus_config_t buscfg = {
-      .miso_io_num = SPI_MISO,
       .mosi_io_num = SPI_MOSI,
+      .miso_io_num = SPI_MISO,
       .sclk_io_num = SPI_SCK,
       .quadwp_io_num = -1,
       .quadhd_io_num = -1,
-      .max_transfer_sz = BUFFER_SIZE * 2};
+      .max_transfer_sz = BUFFER_SIZE * sizeof(uint16_t)};
 
   spi_device_interface_config_t devcfg = {
-      .clock_speed_hz = SAMPLE_RATE * 16,  // 16 MHz SPI Clock
       .mode = 0,
+      .clock_speed_hz = SAMPLE_RATE * 16,  // 16 MHz SPI Clock
       .spics_io_num = SPI_CS,
+      .flags = SPI_DEVICE_HALFDUPLEX | SPI_DEVICE_NO_DUMMY | SPI_DEVICE_HALFDUPLEX,
       .queue_size = 1,
-      .flags = SPI_DEVICE_HALFDUPLEX | SPI_DEVICE_NO_DUMMY | SPI_DEVICE_FLAG_DMA,
       .pre_cb = NULL,
       .post_cb = spi_callback};
 
-  spi_bus_initialize(HSPI_HOST, &buscfg, 2);  // Activar canal DMA
+  spi_bus_initialize(HSPI_HOST, &buscfg, SPI_DMA_CH_AUTO);  // Activar canal DMA
   spi_bus_add_device(HSPI_HOST, &devcfg, &spi);
 }
 
 void readADC() {
   spi_transaction_t trans = {};
-  trans.length = BUFFER_SIZE * 16;  // 12 bits por muestra, pero la SPI transmite en múltiplos de 8 bits
+  memset(&trans, 0, sizeof(trans));
+  trans.length = BUFFER_SIZE * 16;  // 16 bits por muestra
   trans.rx_buffer = &circular_buffer[head];
+  trans.flags = SPI_TRANS_USE_RXDATA;  // Asegurar uso de DMA
   spi_device_queue_trans(spi, &trans, portMAX_DELAY);
   head = (head + BUFFER_SIZE) % CIRCULAR_BUFFER_SIZE;
   sendBuffer();
@@ -124,7 +126,7 @@ void sendBuffer() {
   while (tail != head) {
     uint16_t checksum = calculateChecksum(&circular_buffer[tail], BUFFER_SIZE);
     if (client.connected()) {
-      client.write((uint8_t*)&circular_buffer[tail], BUFFER_SIZE * 2);
+      client.write((uint8_t*)&circular_buffer[tail], BUFFER_SIZE * sizeof(uint16_t));
       client.write((uint8_t*)&checksum, sizeof(checksum));
       client.flush();  // Asegura que los datos se envíen inmediatamente
     }
