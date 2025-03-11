@@ -1,6 +1,9 @@
 #include <SPI.h>
-#include "driver/spi_master.h"
 #include <WiFi.h>
+
+#include "driver/spi_master.h"
+
+//==============================================================================
 
 #define SPI_MOSI 23
 #define SPI_MISO 19
@@ -10,6 +13,8 @@
 #define SAMPLE_RATE 1000000  // 1 MHz
 #define BUFFER_SIZE 1024
 #define CIRCULAR_BUFFER_SIZE 4096  // Tamaño total del buffer circular
+
+//==============================================================================
 
 const char* ssid = "ESP32_NETWORK";
 const char* password = "password1234";
@@ -23,6 +28,34 @@ volatile size_t head = 0;
 volatile size_t tail = 0;
 volatile bool buffer_ready = false;
 unsigned long lastReconnectAttempt = 0;
+
+//==============================================================================
+
+uint16_t calculateChecksum(uint16_t* data, size_t length);
+void IRAM_ATTR spi_callback(spi_transaction_t *trans);
+void setupSPI();
+void readADC();
+void setupWiFi();
+void reconnectWiFi();
+void sendBuffer();
+
+//==============================================================================
+
+void setup() {
+  Serial.begin(115200);
+  setupSPI();
+  setupWiFi();
+}
+
+void loop() {
+  reconnectWiFi();
+  readADC();
+  if (buffer_ready) {
+    buffer_ready = false;
+  }
+}
+
+//==============================================================================
 
 uint16_t calculateChecksum(uint16_t* data, size_t length) {
   uint16_t checksum = 0;
@@ -96,19 +129,5 @@ void sendBuffer() {
       client.flush();  // Asegura que los datos se envíen inmediatamente
     }
     tail = (tail + BUFFER_SIZE) % CIRCULAR_BUFFER_SIZE;
-  }
-}
-
-void setup() {
-  Serial.begin(115200);
-  setupSPI();
-  setupWiFi();
-}
-
-void loop() {
-  reconnectWiFi();
-  readADC();
-  if (buffer_ready) {
-    buffer_ready = false;
   }
 }
