@@ -17,14 +17,12 @@ const String wifiPassword = "xxxxxx";
 
 const String apiServerBaseUrl = "http://xxxxxx:5000";  // Change to server's IP address
 
-const String sendModeUrl = apiServerBaseUrl + "/get_send_mode";
-const String blinkingFrequencyUrl = apiServerBaseUrl + "/get_blinking_frequency";
 const String messageDataUrl = apiServerBaseUrl + "/get_message_data";
+const String blinkingFrequencyUrl = apiServerBaseUrl + "/get_blinking_frequency";
 
 //==============================================================================
 
-void sendString(float blinkingFrequency, const String& messageData);
-void sendBinary(float blinkingFrequency, const uint8_t* messageData, unsigned int dataSize);
+void sendMessage(const String &messageData, const float &blinkingFrequency);
 String getRequest(WiFiClient& wifiClient, HTTPClient& httpClient, const String& targetUrl);
 void setupWiFi();
 
@@ -43,59 +41,23 @@ void loop() {
   WiFiClient wifiClient;
   HTTPClient httpClient;
 
-  const String sendMode = getRequest(wifiClient, httpClient, sendModeUrl);
-  Serial.println("Send mode: " + sendMode);
+  const String messageData = getRequest(wifiClient, httpClient, messageDataUrl);
+  Serial.println("Message data: " + messageData);
 
-  if (sendMode == "Error") {
-    Serial.println("Error getting send mode");
+  if (messageData == "Error") {
+    Serial.println("Error getting message data");
     return;
   }
 
-  if (sendMode == "send_string") {
-    const String blinkingFrequency = getRequest(wifiClient, httpClient, blinkingFrequencyUrl);
-    Serial.println("Frequency: " + blinkingFrequency);
+  const String blinkingFrequency = getRequest(wifiClient, httpClient, blinkingFrequencyUrl);
+  Serial.println("Blinking frequency: " + blinkingFrequency);
 
-    if (blinkingFrequency == "Error") {
-      Serial.println("Error getting blinking frequency");
-      return;
-    }
-
-    const String messageData = getRequest(wifiClient, httpClient, messageDataUrl);
-    Serial.println("Data: " + messageData);
-
-    if (messageData == "Error") {
-      Serial.println("Error getting message data");
-      return;
-    }
-
-    sendString(blinkingFrequency.toFloat(), messageData);
+  if (blinkingFrequency == "Error") {
+    Serial.println("Error getting blinking frequency");
+    return;
   }
 
-  if (sendMode == "send_binary") {
-    const String blinkingFrequency = getRequest(wifiClient, httpClient, blinkingFrequencyUrl);
-    Serial.println("Frequency: " + blinkingFrequency);
-
-    if (blinkingFrequency == "Error") {
-      Serial.println("Error getting blinking frequency");
-      return;
-    }
-
-    String messageData = getRequest(wifiClient, httpClient, messageDataUrl);
-    Serial.println("Data: " + messageData);
-
-    if (messageData == "Error") {
-      Serial.println("Error getting message data");
-      return;
-    }
-
-    const unsigned int dataSize = messageData.length();
-    uint8_t dataBytes[dataSize];
-    for (int i = 0; i < dataSize; i++) {
-      dataBytes[i] = messageData[i] - '0';
-    }
-
-    sendBinary(blinkingFrequency.toFloat(), dataBytes, dataSize);
-  }
+  sendMessage(messageData, blinkingFrequency.toFloat());
 }
 
 //==============================================================================
@@ -112,40 +74,15 @@ void setupWiFi() {
   Serial.println("WiFi connection established.");
 }
 
-void sendString(const float blinkingFrequency, const String& messageData) {
+void sendMessage(const String &messageData, const float &blinkingFrequency) {
   digitalWrite(DEBUG_LED_PIN, HIGH);
   Serial.println("Sending message data");
 
   const auto bitWaitTime = static_cast<unsigned long>(SAMPLE_RATE / blinkingFrequency);  // Time in microseconds for each bit
   unsigned long startTime = micros();
 
-  const unsigned int dataSize = messageData.length();
-  for (unsigned int i = 0; i < dataSize; i++) {
-    const uint8_t byte = messageData[i];  // Character of the message data string
-
-    for (int j = 7; j >= 0; j--) {
-      digitalWrite(LIGHT_PIN, (byte >> j) & 1);  // Send the bit
-
-      while ((micros() - startTime) < bitWaitTime) {
-        // Wait for the bit time to pass
-      }
-      startTime += bitWaitTime;
-    }
-  }
-
-  Serial.println("Data sent");
-  digitalWrite(DEBUG_LED_PIN, LOW);
-}
-
-void sendBinary(const float blinkingFrequency, const uint8_t* messageData, const unsigned int dataSize) {
-  digitalWrite(DEBUG_LED_PIN, HIGH);
-  Serial.println("Sending message data");
-
-  const auto bitWaitTime = static_cast<unsigned long>(SAMPLE_RATE / blinkingFrequency);  // Time in microseconds for each bit
-  unsigned long startTime = micros();
-
-  for (int i = 0; i < dataSize; i++) {
-    digitalWrite(LIGHT_PIN, messageData[i] ? HIGH : LOW);  // Send the bit
+  for (const auto messageBit : messageData) {
+    digitalWrite(LIGHT_PIN, messageBit ? HIGH : LOW);  // Send the bit
 
     while ((micros() - startTime) < bitWaitTime) {
       // Wait for the bit time to pass
@@ -156,6 +93,7 @@ void sendBinary(const float blinkingFrequency, const uint8_t* messageData, const
   Serial.println("Data sent");
   digitalWrite(DEBUG_LED_PIN, LOW);
 }
+
 
 String getRequest(WiFiClient& wifiClient, HTTPClient& httpClient, const String& targetUrl) {
   Serial.println("Sending http request");
