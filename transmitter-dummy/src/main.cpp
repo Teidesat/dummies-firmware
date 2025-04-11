@@ -81,13 +81,16 @@ void sendMessage(const String &messageData, const float &blinkingFrequency) {
   const auto bitWaitTime = static_cast<unsigned long>(SAMPLE_RATE / blinkingFrequency);  // Time in microseconds for each bit
   unsigned long startTime = micros();
 
-  for (const auto messageBit : messageData) {
-    digitalWrite(LIGHT_PIN, messageBit ? HIGH : LOW);  // Send the bit
+  for (const auto messageByte : messageData) {
+    for (int i{0}; i < 8; ++i) {
+      int currentBit = (messageByte >> i) & 1;
+      digitalWrite(LIGHT_PIN, currentBit ? HIGH : LOW);  // Send the bit
 
-    while ((micros() - startTime) < bitWaitTime) {
-      // Wait for the bit time to pass
+      while ((micros() - startTime) < bitWaitTime) {
+        // Wait for the bit time to pass
+      }
+      startTime += bitWaitTime;
     }
-    startTime += bitWaitTime;
   }
 
   Serial.println("Data sent");
