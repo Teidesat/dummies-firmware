@@ -82,9 +82,11 @@ void sendMessage(const String &messageData, const float &blinkingFrequency) {
   unsigned long startTime = micros();
 
   for (const auto messageByte : messageData) {
-    for (int i{0}; i < 8; ++i) {
+    Serial.println("Current char: " + String(messageByte));
+    for (int i{7}; i >= 0; --i) {
       int currentBit = (messageByte >> i) & 1;
-      digitalWrite(LIGHT_PIN, currentBit ? HIGH : LOW);  // Send the bit
+      Serial.println("Current bit: " + String(currentBit));
+      digitalWrite(LIGHT_PIN, currentBit == 1 ? HIGH : LOW);  // Send the bit
 
       while ((micros() - startTime) < bitWaitTime) {
         // Wait for the bit time to pass
