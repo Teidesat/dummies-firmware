@@ -2,6 +2,7 @@
 #include <WiFi.h>
 #include <WiFiClient.h>
 #include <HTTPClient.h>
+#include <atomic>
 
 #include "driver/spi_master.h"
 
@@ -23,15 +24,18 @@
 const String wifiSsid = "xxxxxx";
 const String wifiPassword = "xxxxxx";
 const auto * const serverHostname = "http://xxxxxx:5001";  // Raspberry Pi IP
+constexpr int serverPort = 5001;
 const String binaryEndpoint = serverHostname + String("/receive_binary");
 
 WiFiClient wifiClient;
 spi_device_handle_t spiDeviceHandle;
 std::array<uint16_t, CIRCULAR_BUFFER_SIZE>circularBuffer;
+std::atomic_ushort packageCounter(0);
 volatile size_t bufferHeadIndex = 0;
 volatile size_t bufferTailIndex = 0;
 volatile bool bufferIsReady = false;
 unsigned long lastReconnectionAttempt = 0;
+TaskHandle_t sendBufferHandler = NULL;
 
 //==============================================================================
 
@@ -41,7 +45,7 @@ void setupSPI();
 void readADC();
 void setupWiFi();
 void reconnectWiFi();
-void sendBuffer();
+void sendBuffer(void *);
 String postRequest(WiFiClient& wifiClient, HTTPClient& httpClient, const String& targetUrl, uint8_t* payload,
                    size_t size);
 void readPhotorresistor();
@@ -54,18 +58,13 @@ void setup() {
   Serial.println("Starting wifi");
   // setupSPI();
   setupWiFi();
+  xTaskCreatePinnedToCore(sendBuffer, "sendBuffer", 2048, nullptr, 1, &sendBufferHandler, 0);
 }
 
-void loop() {
+void loop() { // Loop uses core 1
   //reconnectWiFi();
   //readADC();
-  //Serial.println("After reconnecting");
   readPhotorresistor();
-  //Serial.println("After reading photorresistor");
-  if (bufferIsReady) {
-    sendBuffer();
-    bufferIsReady = false;
-  }
 }
 
 //==============================================================================
@@ -118,7 +117,7 @@ void readADC() {
   spi_device_queue_trans(spiDeviceHandle, &spiTransaction, portMAX_DELAY);
 
   bufferHeadIndex = (bufferHeadIndex + BUFFER_SIZE) % CIRCULAR_BUFFER_SIZE;
-  sendBuffer();
+  sendBuffer(nullptr);
 }
 
 void setupWiFi() {
@@ -148,31 +147,35 @@ void reconnectWiFi() {
   setupWiFi();
 }
 
-void sendBuffer() {
-  while (bufferTailIndex != bufferHeadIndex) {
-    uint16_t checksum = calculateChecksum(
-        &circularBuffer[bufferTailIndex],
-        BUFFER_SIZE
-    );
-
-    //if (wifiClient.connected()) {
-      /*
-      wifiClient.write(
-          reinterpret_cast<uint8_t *>(&circularBuffer[bufferTailIndex]),
-          BUFFER_SIZE * sizeof(uint16_t)
+void sendBuffer(void *params) {
+  while (true) {
+    delay(1);
+    while (packageCounter != 0) {
+      uint16_t checksum = calculateChecksum(
+          &circularBuffer[bufferTailIndex],
+          BUFFER_SIZE
       );
-      wifiClient.write(
-          reinterpret_cast<uint8_t *>(&checksum),
-          sizeof(checksum)
-      );*/
-      HTTPClient httpClient;
 
-      postRequest(wifiClient, httpClient, binaryEndpoint,
-                  reinterpret_cast<uint8_t *>(&circularBuffer[bufferTailIndex]), BUFFER_SIZE * sizeof(uint16_t));
-      //wifiClient.flush();  // Asegura que los datos se envíen inmediatamente
-    //}
+      //if (wifiClient.connected()) {
+        /*
+        wifiClient.write(
+            reinterpret_cast<uint8_t *>(&circularBuffer[bufferTailIndex]),
+            BUFFER_SIZE * sizeof(uint16_t)
+        );
+        wifiClient.write(
+            reinterpret_cast<uint8_t *>(&checksum),
+            sizeof(checksum)
+        );*/
+        HTTPClient httpClient;
 
-    bufferTailIndex = (bufferTailIndex + BUFFER_SIZE) % CIRCULAR_BUFFER_SIZE;
+        postRequest(wifiClient, httpClient, binaryEndpoint,
+                    reinterpret_cast<uint8_t *>(&circularBuffer[bufferTailIndex]), BUFFER_SIZE * sizeof(uint16_t));
+        //wifiClient.flush();  // Asegura que los datos se envíen inmediatamente
+      //}
+
+      bufferTailIndex = (bufferTailIndex + BUFFER_SIZE) % CIRCULAR_BUFFER_SIZE;
+      packageCounter--;
+    }
   }
 }
 
@@ -199,14 +202,23 @@ String postRequest(WiFiClient& wifiClient, HTTPClient& httpClient, const String&
 }
 
 void readPhotorresistor() {
-  const int readBit = digitalRead(SIGNAL_PIN);
-  Serial.print(readBit);
-  circularBuffer[bufferHeadIndex++] = readBit;
-  if (bufferHeadIndex % BUFFER_SIZE == 0) {
-    Serial.println();
-    bufferIsReady = true;
-    if (bufferHeadIndex == CIRCULAR_BUFFER_SIZE) {
-      bufferHeadIndex = 0;
+  while (true) {
+    uint16_t currentValue = 0; // Next value to insert in the buffer.
+    for (int i = 15; i >= 0; --i) {
+      const int readBit = digitalRead(SIGNAL_PIN) ? HIGH : LOW;
+      currentValue |= readBit << i;
+      Serial.print(readBit ? 1 : 0);
+      // Wait time between reads
+      delayMicroseconds(1);
+    }
+    //Serial.print(currentValue);
+    circularBuffer[bufferHeadIndex++] = currentValue;
+    if (bufferHeadIndex % BUFFER_SIZE == 0) {
+      Serial.println( " Finished package");
+      packageCounter++;
+      if (bufferHeadIndex == CIRCULAR_BUFFER_SIZE) {
+        bufferHeadIndex = 0;
+      }
     }
   }
 }
