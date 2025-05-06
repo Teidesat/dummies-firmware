@@ -19,9 +19,13 @@ const String apiServerBaseUrl = "http://xxxxxx:5000";  // Change to server's IP 
 
 const String messageDataUrl = apiServerBaseUrl + "/get_message_data";
 const String blinkingFrequencyUrl = apiServerBaseUrl + "/get_blinking_frequency";
+const String firmwareStateUrl = apiServerBaseUrl + "/firmware_state";
+
+TaskHandle_t SEND_LOOP_HANDLE = NULL;
 
 //==============================================================================
 
+void sendLoop(void * parameters);
 void sendMessage(const String &messageData, const float &blinkingFrequency);
 String getRequest(WiFiClient& wifiClient, HTTPClient& httpClient, const String& targetUrl);
 void setupWiFi();
@@ -41,26 +45,44 @@ void loop() {
   WiFiClient wifiClient;
   HTTPClient httpClient;
 
-  const String messageData = getRequest(wifiClient, httpClient, messageDataUrl);
-  Serial.println("Message data: " + messageData);
+  const String currentState = getRequest(wifiClient, httpClient, firmwareStateUrl);
 
-  if (messageData == "Error") {
-    Serial.println("Error getting message data");
-    return;
+  if (currentState == "Sending" && SEND_LOOP_HANDLE == NULL) {
+    xTaskCreatePinnedToCore(sendLoop, "sendLoop", 2048, nullptr, 1, &SEND_LOOP_HANDLE, 0);
+  } else if (currentState == "Idle" && SEND_LOOP_HANDLE != NULL) {
+    vTaskDelete(SEND_LOOP_HANDLE);
+  } else {
+    Serial.print("Unknown state: ");
+    Serial.println(currentState);
   }
-
-  const String blinkingFrequency = getRequest(wifiClient, httpClient, blinkingFrequencyUrl);
-  Serial.println("Blinking frequency: " + blinkingFrequency);
-
-  if (blinkingFrequency == "Error") {
-    Serial.println("Error getting blinking frequency");
-    return;
-  }
-
-  sendMessage(messageData, blinkingFrequency.toFloat());
+  sleep(2); // Wait between state requests
 }
 
 //==============================================================================
+
+void sendLoop(void* parameters) {
+  WiFiClient wifiClient;
+  HTTPClient httpClient;
+  while (true) {
+    const String messageData = getRequest(wifiClient, httpClient, messageDataUrl);
+    Serial.println("Message data: " + messageData);
+
+    if (messageData == "") {
+      Serial.println("Error getting message data");
+      return;
+    }
+
+    const String blinkingFrequency = getRequest(wifiClient, httpClient, blinkingFrequencyUrl);
+    Serial.println("Blinking frequency: " + blinkingFrequency);
+
+    if (blinkingFrequency == "") {
+      Serial.println("Error getting blinking frequency");
+      return;
+    }
+
+    sendMessage(messageData, blinkingFrequency.toFloat());
+  }
+}
 
 void setupWiFi() {
   WiFi.begin(wifiSsid, wifiPassword);
