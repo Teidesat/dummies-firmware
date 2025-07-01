@@ -2,6 +2,7 @@
 #include <WiFi.h>
 #include <WiFiClient.h>
 #include <HTTPClient.h>
+#include <mutex>
 
 //==============================================================================
 
@@ -20,6 +21,8 @@ const String apiServerBaseUrl = "http://xxxxxx:5000";  // Change to server's IP 
 const String messageDataUrl = apiServerBaseUrl + "/get_message_data";
 const String blinkingFrequencyUrl = apiServerBaseUrl + "/get_blinking_frequency";
 const String firmwareStateUrl = apiServerBaseUrl + "/firmware_state";
+
+std::mutex HTTP_CLIENT_IN_USE;
 
 TaskHandle_t SEND_LOOP_HANDLE = NULL;
 
@@ -45,14 +48,17 @@ void loop() {
   WiFiClient wifiClient;
   HTTPClient httpClient;
 
+  std::lock_guard<std::mutex> guard(HTTP_CLIENT_IN_USE);
   const String currentState = getRequest(wifiClient, httpClient, firmwareStateUrl);
 
   if (currentState == "Sending" && SEND_LOOP_HANDLE == NULL) {
-    xTaskCreatePinnedToCore(sendLoop, "sendLoop", 2048, nullptr, 1, &SEND_LOOP_HANDLE, 0);
+    Serial.println("Sending");
+    xTaskCreatePinnedToCore(sendLoop, "sendLoop", 8192, nullptr, 1, &SEND_LOOP_HANDLE, 0);
   } else if (currentState == "Idle" && SEND_LOOP_HANDLE != NULL) {
+    Serial.println("Idle");
     vTaskDelete(SEND_LOOP_HANDLE);
   } else {
-    Serial.print("Unknown state: ");
+    Serial.print("Current state: ");
     Serial.println(currentState);
   }
   sleep(2); // Wait between state requests
@@ -63,23 +69,28 @@ void loop() {
 void sendLoop(void* parameters) {
   WiFiClient wifiClient;
   HTTPClient httpClient;
+  String messageData;
+  String blinkingFrequency;
   while (true) {
-    const String messageData = getRequest(wifiClient, httpClient, messageDataUrl);
-    Serial.println("Message data: " + messageData);
+    { // Scope for the lock guard
+      vTaskDelay(1);
+      std::lock_guard<std::mutex> guard(HTTP_CLIENT_IN_USE);
+      messageData = getRequest(wifiClient, httpClient, messageDataUrl);
+      Serial.println("Message data: " + messageData);
 
-    if (messageData == "") {
-      Serial.println("Error getting message data");
-      return;
+      if (messageData == "") {
+        Serial.println("Error getting message data");
+        return;
+      }
+
+      blinkingFrequency = getRequest(wifiClient, httpClient, blinkingFrequencyUrl);
+      Serial.println("Blinking frequency: " + blinkingFrequency);
+
+      if (blinkingFrequency == "") {
+        Serial.println("Error getting blinking frequency");
+        return;
+      }
     }
-
-    const String blinkingFrequency = getRequest(wifiClient, httpClient, blinkingFrequencyUrl);
-    Serial.println("Blinking frequency: " + blinkingFrequency);
-
-    if (blinkingFrequency == "") {
-      Serial.println("Error getting blinking frequency");
-      return;
-    }
-
     sendMessage(messageData, blinkingFrequency.toFloat());
   }
 }
@@ -137,7 +148,7 @@ String getRequest(WiFiClient& wifiClient, HTTPClient& httpClient, const String& 
         HTTPClient::errorToString(responseCode).c_str()
     );
 
-    return "Error";
+    return "";
   }
 
   Serial.printf("[HTTP] GET... code: %d", responseCode);
