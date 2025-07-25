@@ -13,10 +13,10 @@
 
 //==============================================================================
 
-const String wifiSsid = "xxxxxx";
-const String wifiPassword = "xxxxxx";
+const String wifiSsid = "transmitter-dummy";
+const String wifiPassword = "transmitter-dummy";
 
-const String apiServerBaseUrl = "http://xxxxxx:5000";  // Change to server's IP address
+const String apiServerBaseUrl = "http://10.42.0.1:5000";  // Change to server's IP address
 
 const String messageDataUrl = apiServerBaseUrl + "/get_message_data";
 const String blinkingFrequencyUrl = apiServerBaseUrl + "/get_blinking_frequency";
@@ -38,8 +38,8 @@ void setupWiFi();
 void setup() {
   pinMode(LIGHT_PIN, OUTPUT);
   pinMode(DEBUG_LED_PIN, OUTPUT);
-
   Serial.begin(9600);
+  disableCore0WDT();
 
   setupWiFi();
 }
@@ -57,6 +57,8 @@ void loop() {
   } else if (currentState == "Idle" && SEND_LOOP_HANDLE != NULL) {
     Serial.println("Idle");
     vTaskDelete(SEND_LOOP_HANDLE);
+    SEND_LOOP_HANDLE = NULL;
+    digitalWrite(LIGHT_PIN, LOW);
   } else {
     Serial.print("Current state: ");
     Serial.println(currentState);
@@ -80,7 +82,7 @@ void sendLoop(void* parameters) {
 
       if (messageData == "") {
         Serial.println("Error getting message data");
-        return;
+        break;
       }
 
       blinkingFrequency = getRequest(wifiClient, httpClient, blinkingFrequencyUrl);
@@ -88,11 +90,14 @@ void sendLoop(void* parameters) {
 
       if (blinkingFrequency == "") {
         Serial.println("Error getting blinking frequency");
-        return;
+        break;
       }
     }
     sendMessage(messageData, blinkingFrequency.toFloat());
   }
+  SEND_LOOP_HANDLE = NULL;
+  vTaskDelete(NULL);
+  digitalWrite(LIGHT_PIN, LOW);
 }
 
 void setupWiFi() {
@@ -112,7 +117,7 @@ void sendMessage(const String &messageData, const float &blinkingFrequency) {
   Serial.println("Sending message data");
 
   const auto bitWaitTime = static_cast<unsigned long>(SAMPLE_RATE / blinkingFrequency);  // Time in microseconds for each bit
-  unsigned long startTime = micros();
+  //unsigned long startTime = micros();
 
   for (const auto messageByte : messageData) {
     Serial.println("Current char: " + String(messageByte));
@@ -120,11 +125,13 @@ void sendMessage(const String &messageData, const float &blinkingFrequency) {
       int currentBit = (messageByte >> i) & 1;
       Serial.println("Current bit: " + String(currentBit));
       digitalWrite(LIGHT_PIN, currentBit == 1 ? HIGH : LOW);  // Send the bit
-
+      /*
       while ((micros() - startTime) < bitWaitTime) {
         // Wait for the bit time to pass
       }
-      startTime += bitWaitTime;
+      */
+      delayMicroseconds(bitWaitTime);
+    //startTime += bitWaitTime;
     }
   }
 
