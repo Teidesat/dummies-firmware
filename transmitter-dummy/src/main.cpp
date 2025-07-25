@@ -101,6 +101,7 @@ void sendLoop(void* parameters) {
 }
 
 void setupWiFi() {
+  WiFi.setMinSecurity(WIFI_AUTH_WPA_PSK);
   WiFi.begin(wifiSsid, wifiPassword);
   Serial.print("Connecting to WiFi...");
 
