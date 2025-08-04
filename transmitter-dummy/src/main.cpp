@@ -103,10 +103,11 @@ void sendLoop(void* parameters) {
 void setupWiFi() {
   WiFi.setMinSecurity(WIFI_AUTH_WPA_PSK);
   WiFi.begin(wifiSsid, wifiPassword);
-  Serial.print("Connecting to WiFi...");
+  Serial.println("Connecting to WiFi...");
 
   while (WiFiClass::status() != WL_CONNECTED) {
-    Serial.print('.');
+    Serial.print("  ...Status code: ");
+    Serial.println(WiFiClass::status());
     delay(500);
   }
 
@@ -115,16 +116,16 @@ void setupWiFi() {
 
 void sendMessage(const String &messageData, const float &blinkingFrequency) {
   digitalWrite(DEBUG_LED_PIN, HIGH);
-  Serial.println("Sending message data");
+  Serial.println("Sending message data: " + messageData);
 
   const auto bitWaitTime = static_cast<unsigned long>(SAMPLE_RATE / blinkingFrequency);  // Time in microseconds for each bit
   //unsigned long startTime = micros();
 
   for (const auto messageByte : messageData) {
-    Serial.println("Current char: " + String(messageByte));
+    // Serial.println("Current char: " + String(messageByte));
     for (int i{7}; i >= 0; --i) {
       int currentBit = (messageByte >> i) & 1;
-      Serial.println("Current bit: " + String(currentBit));
+      // Serial.println("Current bit: " + String(currentBit));
       digitalWrite(LIGHT_PIN, currentBit == 1 ? HIGH : LOW);  // Send the bit
       /*
       while ((micros() - startTime) < bitWaitTime) {
@@ -143,6 +144,8 @@ void sendMessage(const String &messageData, const float &blinkingFrequency) {
 
 String getRequest(WiFiClient& wifiClient, HTTPClient& httpClient, const String& targetUrl) {
   Serial.println("Sending http request");
+
+  // ToDo: Check if still connected to WiFi
 
   if (httpClient.begin(wifiClient, targetUrl)) {
     Serial.println("URL initialized");
