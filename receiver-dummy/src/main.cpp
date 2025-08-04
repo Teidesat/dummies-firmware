@@ -21,9 +21,9 @@
 
 //==============================================================================
 
-const String wifiSsid = "xxxxxx";
-const String wifiPassword = "xxxxxx";
-const auto * const serverHostname = "http://xxxxxx:5001";  // Raspberry Pi IP
+const String wifiSsid = "receiver-dummy";
+const String wifiPassword = "receiver-dummy";
+const auto * const serverHostname = "http://10.42.0.2:5001";  // Raspberry Pi IP
 constexpr int serverPort = 5001;
 const String binaryEndpoint = serverHostname + String("/receive_binary");
 
@@ -121,6 +121,7 @@ void readADC() {
 }
 
 void setupWiFi() {
+  WiFi.setMinSecurity(WIFI_AUTH_WPA_PSK);
   WiFi.begin(wifiSsid, wifiPassword);
   Serial.print("Connecting to WiFi...");
 
