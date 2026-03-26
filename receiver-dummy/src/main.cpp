@@ -49,6 +49,7 @@ void sendBuffer(void *);
 String postRequest(WiFiClient& wifiClient, HTTPClient& httpClient, const String& targetUrl, uint8_t* payload,
                    size_t size);
 void readPhotorresistor();
+bool ensureWiFiConnected();
 //==============================================================================
 
 void setup() {
@@ -121,7 +122,11 @@ void readADC() {
 }
 
 void setupWiFi() {
+  WiFi.persistent(false);
+  WiFi.mode(WIFI_STA);
   WiFi.setMinSecurity(WIFI_AUTH_WPA_PSK);
+  WiFi.disconnect(true, true);
+  delay(250);
   WiFi.begin(wifiSsid, wifiPassword);
   Serial.print("Connecting to WiFi...");
 
@@ -132,6 +137,15 @@ void setupWiFi() {
 
   Serial.println("WiFi connection established.");
   //wifiClient.connect(serverHostname, serverPort);
+}
+
+bool ensureWiFiConnected() {
+  if (WiFiClass::status() == WL_CONNECTED) {
+    return true;
+  }
+
+  reconnectWiFi();
+  return WiFiClass::status() == WL_CONNECTED;
 }
 
 void reconnectWiFi() {
@@ -184,9 +198,19 @@ String postRequest(WiFiClient& wifiClient, HTTPClient& httpClient, const String&
                    size_t size) {
   Serial.println("Sending http request");
 
-  if (httpClient.begin(wifiClient, targetUrl)) {
-    Serial.println("URL initialized");
+  if (!ensureWiFiConnected()) {
+    return "Error";
   }
+
+  httpClient.setReuse(false);
+
+  if (!httpClient.begin(wifiClient, targetUrl)) {
+    Serial.println("Failed to initialize URL");
+    wifiClient.stop();
+    return "Error";
+  }
+
+  Serial.println("URL initialized");
 
   const int responseCode = httpClient.POST(payload, size);
 
@@ -196,9 +220,13 @@ String postRequest(WiFiClient& wifiClient, HTTPClient& httpClient, const String&
         HTTPClient::errorToString(responseCode).c_str()
     );
 
+    httpClient.end();
+    wifiClient.stop();
+
     return "Error";
   }
 
+  httpClient.end();
   return String(responseCode);
 }
 

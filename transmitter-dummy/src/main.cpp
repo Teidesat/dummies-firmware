@@ -32,6 +32,7 @@ void sendLoop(void * parameters);
 void sendMessage(const String &messageData, const float &blinkingFrequency);
 String getRequest(WiFiClient& wifiClient, HTTPClient& httpClient, const String& targetUrl);
 void setupWiFi();
+bool ensureWiFiConnected();
 
 //==============================================================================
 
@@ -101,7 +102,11 @@ void sendLoop(void* parameters) {
 }
 
 void setupWiFi() {
+  WiFi.persistent(false);                 // Don't save WiFi credentials to flash
+  WiFi.mode(WIFI_STA);                    // Set WiFi to station mode
   WiFi.setMinSecurity(WIFI_AUTH_WPA_PSK);
+  WiFi.disconnect(true, true);            // Disconnect from any previous WiFi connections and erase credentials
+  delay(250);
   WiFi.begin(wifiSsid, wifiPassword);
   Serial.println("Connecting to WiFi...");
 
@@ -112,6 +117,16 @@ void setupWiFi() {
   }
 
   Serial.println("WiFi connection established.");
+}
+
+bool ensureWiFiConnected() {
+  if (WiFiClass::status() == WL_CONNECTED) {
+    return true;
+  }
+
+  Serial.println("WiFi disconnected, reconnecting...");
+  setupWiFi();
+  return WiFiClass::status() == WL_CONNECTED;
 }
 
 void sendMessage(const String &messageData, const float &blinkingFrequency) {
@@ -145,11 +160,19 @@ void sendMessage(const String &messageData, const float &blinkingFrequency) {
 String getRequest(WiFiClient& wifiClient, HTTPClient& httpClient, const String& targetUrl) {
   Serial.println("Sending http request");
 
-  // ToDo: Check if still connected to WiFi
-
-  if (httpClient.begin(wifiClient, targetUrl)) {
-    Serial.println("URL initialized");
+  if (!ensureWiFiConnected()) {
+    return "";
   }
+
+  httpClient.setReuse(false);
+
+  if (!httpClient.begin(wifiClient, targetUrl)) {
+    Serial.println("Failed to initialize URL");
+    wifiClient.stop();
+    return "";
+  }
+
+  Serial.println("URL initialized");
 
   const int responseCode = httpClient.GET();
 
@@ -159,12 +182,16 @@ String getRequest(WiFiClient& wifiClient, HTTPClient& httpClient, const String& 
         HTTPClient::errorToString(responseCode).c_str()
     );
 
+    httpClient.end();
+    wifiClient.stop();
+
     return "";
   }
 
   Serial.printf("[HTTP] GET... code: %d", responseCode);
 
   String responsePayload = httpClient.getString();
+  httpClient.end();
   Serial.println("Received payload: " + responsePayload);
 
   return responsePayload;
