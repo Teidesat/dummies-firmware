@@ -2,7 +2,8 @@
 #include <WiFi.h>
 #include <WiFiClient.h>
 #include <HTTPClient.h>
-#include <mutex>
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 
 //==============================================================================
 
@@ -22,7 +23,7 @@ const String messageDataUrl = apiServerBaseUrl + "/get_message_data";
 const String blinkingFrequencyUrl = apiServerBaseUrl + "/get_blinking_frequency";
 const String firmwareStateUrl = apiServerBaseUrl + "/firmware_state";
 
-std::mutex HTTP_CLIENT_IN_USE;
+SemaphoreHandle_t HTTP_CLIENT_IN_USE = nullptr;
 
 TaskHandle_t SEND_LOOP_HANDLE = NULL;
 
@@ -42,6 +43,14 @@ void setup() {
   Serial.begin(9600);
   disableCore0WDT();
 
+  HTTP_CLIENT_IN_USE = xSemaphoreCreateMutex();
+  if (HTTP_CLIENT_IN_USE == nullptr) {
+    Serial.println("Failed to create HTTP mutex");
+    while (true) {
+      vTaskDelay(pdMS_TO_TICKS(1000));
+    }
+  }
+
   setupWiFi();
 }
 
@@ -49,8 +58,11 @@ void loop() {
   WiFiClient wifiClient;
   HTTPClient httpClient;
 
-  std::lock_guard<std::mutex> guard(HTTP_CLIENT_IN_USE);
-  const String currentState = getRequest(wifiClient, httpClient, firmwareStateUrl);
+  String currentState;
+  if (xSemaphoreTake(HTTP_CLIENT_IN_USE, portMAX_DELAY) == pdTRUE) {
+    currentState = getRequest(wifiClient, httpClient, firmwareStateUrl);
+    xSemaphoreGive(HTTP_CLIENT_IN_USE);
+  }
 
   if (currentState == "Sending" && SEND_LOOP_HANDLE == NULL) {
     Serial.println("Sending");
@@ -64,7 +76,7 @@ void loop() {
     Serial.print("Current state: ");
     Serial.println(currentState);
   }
-  sleep(2); // Wait between state requests
+  vTaskDelay(pdMS_TO_TICKS(2000)); // Wait between state requests
 }
 
 //==============================================================================
@@ -75,14 +87,18 @@ void sendLoop(void* parameters) {
   String messageData;
   String blinkingFrequency;
   while (true) {
-    { // Scope for the lock guard
-      vTaskDelay(1);
-      std::lock_guard<std::mutex> guard(HTTP_CLIENT_IN_USE);
+    {
+      vTaskDelay(pdMS_TO_TICKS(1));
+      if (xSemaphoreTake(HTTP_CLIENT_IN_USE, portMAX_DELAY) != pdTRUE) {
+        continue;
+      }
+
       messageData = getRequest(wifiClient, httpClient, messageDataUrl);
       Serial.println("Message data: " + messageData);
 
       if (messageData == "") {
         Serial.println("Error getting message data");
+        xSemaphoreGive(HTTP_CLIENT_IN_USE);
         break;
       }
 
@@ -91,8 +107,11 @@ void sendLoop(void* parameters) {
 
       if (blinkingFrequency == "") {
         Serial.println("Error getting blinking frequency");
+        xSemaphoreGive(HTTP_CLIENT_IN_USE);
         break;
       }
+
+      xSemaphoreGive(HTTP_CLIENT_IN_USE);
     }
     sendMessage(messageData, blinkingFrequency.toFloat());
   }
