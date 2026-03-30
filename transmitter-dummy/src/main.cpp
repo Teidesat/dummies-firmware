@@ -3,6 +3,7 @@
 #include <WiFiClient.h>
 #include <HTTPClient.h>
 #include <mutex>
+#include "secrets.h"
 
 //==============================================================================
 
@@ -13,10 +14,9 @@
 
 //==============================================================================
 
-const String wifiSsid = "transmitter-dummy";
-const String wifiPassword = "transmitter-dummy";
-
-const String apiServerBaseUrl = "http://10.42.0.1:5000";  // Change to server's IP address
+const String wifiSsid = WIFI_SSID;
+const String wifiPassword = WIFI_PASSWORD;
+const String apiServerBaseUrl = API_SERVER_BASE_URL;  // Change to server's IP address
 
 const String messageDataUrl = apiServerBaseUrl + "/get_message_data";
 const String blinkingFrequencyUrl = apiServerBaseUrl + "/get_blinking_frequency";
