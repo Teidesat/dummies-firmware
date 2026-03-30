@@ -2,7 +2,10 @@
 #include <WiFi.h>
 #include <WiFiClient.h>
 #include <HTTPClient.h>
-#include <atomic>
+#include <array>
+
+#include "freertos/FreeRTOS.h"
+#include "freertos/queue.h"
 
 #include "driver/spi_master.h"
 
@@ -30,12 +33,13 @@ const String binaryEndpoint = serverHostname + String("/receive_binary");
 WiFiClient wifiClient;
 spi_device_handle_t spiDeviceHandle;
 std::array<uint16_t, CIRCULAR_BUFFER_SIZE>circularBuffer;
-std::atomic_ushort packageCounter(0);
 volatile size_t bufferHeadIndex = 0;
-volatile size_t bufferTailIndex = 0;
 volatile bool bufferIsReady = false;
 unsigned long lastReconnectionAttempt = 0;
 TaskHandle_t sendBufferHandler = NULL;
+QueueHandle_t readyPackageQueue = nullptr;
+
+constexpr size_t PACKAGE_SLOTS = CIRCULAR_BUFFER_SIZE / BUFFER_SIZE;
 
 //==============================================================================
 
@@ -58,6 +62,15 @@ void setup() {
   pinMode(SIGNAL_PIN, INPUT);
   Serial.println("Starting wifi");
   // setupSPI();
+
+  readyPackageQueue = xQueueCreate(PACKAGE_SLOTS, sizeof(size_t));
+  if (readyPackageQueue == nullptr) {
+    Serial.println("Failed to create package queue");
+    while (true) {
+      vTaskDelay(pdMS_TO_TICKS(1000));
+    }
+  }
+
   setupWiFi();
   xTaskCreatePinnedToCore(sendBuffer, "sendBuffer", 2048, nullptr, 1, &sendBufferHandler, 0);
 }
@@ -163,34 +176,36 @@ void reconnectWiFi() {
 }
 
 void sendBuffer(void *params) {
+  size_t packageStartIndex = 0;
+
   while (true) {
-    delay(1);
-    while (packageCounter != 0) {
-      uint16_t checksum = calculateChecksum(
-          &circularBuffer[bufferTailIndex],
-          BUFFER_SIZE
-      );
-
-      //if (wifiClient.connected()) {
-        /*
-        wifiClient.write(
-            reinterpret_cast<uint8_t *>(&circularBuffer[bufferTailIndex]),
-            BUFFER_SIZE * sizeof(uint16_t)
-        );
-        wifiClient.write(
-            reinterpret_cast<uint8_t *>(&checksum),
-            sizeof(checksum)
-        );*/
-        HTTPClient httpClient;
-
-        postRequest(wifiClient, httpClient, binaryEndpoint,
-                    reinterpret_cast<uint8_t *>(&circularBuffer[bufferTailIndex]), BUFFER_SIZE * sizeof(uint16_t));
-        //wifiClient.flush();  // Asegura que los datos se envíen inmediatamente
-      //}
-
-      bufferTailIndex = (bufferTailIndex + BUFFER_SIZE) % CIRCULAR_BUFFER_SIZE;
-      packageCounter--;
+    if (xQueueReceive(readyPackageQueue, &packageStartIndex, portMAX_DELAY) != pdTRUE) {
+      continue;
     }
+
+    uint16_t checksum = calculateChecksum(
+        &circularBuffer[packageStartIndex],
+        BUFFER_SIZE
+    );
+
+    //if (wifiClient.connected()) {
+      /*
+      wifiClient.write(
+          reinterpret_cast<uint8_t *>(&circularBuffer[packageStartIndex]),
+          BUFFER_SIZE * sizeof(uint16_t)
+      );
+      wifiClient.write(
+          reinterpret_cast<uint8_t *>(&checksum),
+          sizeof(checksum)
+      );*/
+      HTTPClient httpClient;
+
+      postRequest(wifiClient, httpClient, binaryEndpoint,
+                  reinterpret_cast<uint8_t *>(&circularBuffer[packageStartIndex]), BUFFER_SIZE * sizeof(uint16_t));
+      //wifiClient.flush();  // Asegura que los datos se envíen inmediatamente
+    //}
+
+    (void) checksum;
   }
 }
 
@@ -232,6 +247,7 @@ String postRequest(WiFiClient& wifiClient, HTTPClient& httpClient, const String&
 
 void readPhotorresistor() {
   while (true) {
+    const size_t sampleIndex = bufferHeadIndex;
     uint16_t currentValue = 0; // Next value to insert in the buffer.
     for (int i = 15; i >= 0; --i) {
       const int readBit = digitalRead(SIGNAL_PIN) ? HIGH : LOW;
@@ -241,12 +257,18 @@ void readPhotorresistor() {
       delayMicroseconds(1);
     }
     //Serial.print(currentValue);
-    circularBuffer[bufferHeadIndex++] = currentValue;
+    circularBuffer[sampleIndex] = currentValue;
+    bufferHeadIndex = (bufferHeadIndex + 1) % CIRCULAR_BUFFER_SIZE;
+
     if (bufferHeadIndex % BUFFER_SIZE == 0) {
       Serial.println( " Finished package");
-      packageCounter++;
-      if (bufferHeadIndex == CIRCULAR_BUFFER_SIZE) {
-        bufferHeadIndex = 0;
+
+      size_t packageStartIndex = (bufferHeadIndex + CIRCULAR_BUFFER_SIZE - BUFFER_SIZE) % CIRCULAR_BUFFER_SIZE;
+      if (xQueueSend(readyPackageQueue, &packageStartIndex, 0) != pdTRUE) {
+        // Queue full: drop oldest package index and keep latest data.
+        size_t droppedPackageStart = 0;
+        xQueueReceive(readyPackageQueue, &droppedPackageStart, 0);
+        xQueueSend(readyPackageQueue, &packageStartIndex, 0);
       }
     }
   }
