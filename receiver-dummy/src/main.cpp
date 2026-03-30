@@ -40,6 +40,7 @@ TaskHandle_t sendBufferHandler = NULL;
 QueueHandle_t readyPackageQueue = nullptr;
 
 constexpr size_t PACKAGE_SLOTS = CIRCULAR_BUFFER_SIZE / BUFFER_SIZE;
+// Number of complete BUFFER_SIZE packages that fit in the circular buffer.
 
 //==============================================================================
 
@@ -63,6 +64,7 @@ void setup() {
   Serial.println("Starting wifi");
   // setupSPI();
 
+  // Queue carries the start index of each complete package ready to send.
   readyPackageQueue = xQueueCreate(PACKAGE_SLOTS, sizeof(size_t));
   if (readyPackageQueue == nullptr) {
     Serial.println("Failed to create package queue");
@@ -179,6 +181,7 @@ void sendBuffer(void *params) {
   size_t packageStartIndex = 0;
 
   while (true) {
+    // Block until producer enqueues a full package.
     if (xQueueReceive(readyPackageQueue, &packageStartIndex, portMAX_DELAY) != pdTRUE) {
       continue;
     }
@@ -247,6 +250,7 @@ String postRequest(WiFiClient& wifiClient, HTTPClient& httpClient, const String&
 
 void readPhotorresistor() {
   while (true) {
+    // Capture index first to avoid races with head updates.
     const size_t sampleIndex = bufferHeadIndex;
     uint16_t currentValue = 0; // Next value to insert in the buffer.
     for (int i = 15; i >= 0; --i) {
@@ -263,6 +267,7 @@ void readPhotorresistor() {
     if (bufferHeadIndex % BUFFER_SIZE == 0) {
       Serial.println( " Finished package");
 
+      // Start index of the package that was just completed.
       size_t packageStartIndex = (bufferHeadIndex + CIRCULAR_BUFFER_SIZE - BUFFER_SIZE) % CIRCULAR_BUFFER_SIZE;
       if (xQueueSend(readyPackageQueue, &packageStartIndex, 0) != pdTRUE) {
         // Queue full: drop oldest package index and keep latest data.
