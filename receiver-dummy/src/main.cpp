@@ -5,6 +5,7 @@
 #include <atomic>
 
 #include "driver/spi_master.h"
+#include "secrets.h"
 
 //==============================================================================
 
@@ -21,10 +22,10 @@
 
 //==============================================================================
 
-const String wifiSsid = "receiver-dummy";
-const String wifiPassword = "receiver-dummy";
-const auto * const serverHostname = "http://10.42.0.2:5001";  // Raspberry Pi IP
-constexpr int serverPort = 5001;
+const String wifiSsid = WIFI_SSID;
+const String wifiPassword = WIFI_PASSWORD;
+const auto * const serverHostname = SERVER_HOSTNAME;  // Raspberry Pi IP
+constexpr int serverPort = SERVER_PORT;
 const String binaryEndpoint = serverHostname + String("/receive_binary");
 
 WiFiClient wifiClient;
