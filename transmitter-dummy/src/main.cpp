@@ -1,3 +1,10 @@
+/**
+ * TEIDESAT Dummies - Transmitter Firmware
+ * Runs on an ESP32 WROOM 32
+ * Core 1 continuously polls the API server for the current firmware state
+ * Core 0 handles the actual data fetching and optical transmission when in "Sending" state
+ */
+
 #include <Arduino.h>
 #include <WiFi.h>
 #include <WiFiClient.h>
@@ -7,10 +14,10 @@
 
 //==============================================================================
 
-#define LIGHT_PIN (18)  // ESP32 Pin to send light pulses
+#define LIGHT_PIN (18)      // ESP32 Pin to send light pulses
 #define DEBUG_LED_PIN (19)  // ESP32 Pin for debugging
 
-#define SAMPLE_RATE (1000000)  // 1 MHz
+#define SAMPLE_RATE (1000000)  // Base sample rate: 1 MHz
 
 //==============================================================================
 
@@ -18,10 +25,12 @@ const String wifiSsid = WIFI_SSID;
 const String wifiPassword = WIFI_PASSWORD;
 const String apiServerBaseUrl = API_SERVER_BASE_URL;  // Change to server's IP address
 
+// Endpoints for polling
 const String messageDataUrl = apiServerBaseUrl + "/get_message_data";
 const String blinkingFrequencyUrl = apiServerBaseUrl + "/get_blinking_frequency";
 const String firmwareStateUrl = apiServerBaseUrl + "/firmware_state";
 
+// Mutex to prevent Wi-Fi hardware collisions between core 0 and core 1
 std::mutex HTTP_CLIENT_IN_USE;
 
 TaskHandle_t SEND_LOOP_HANDLE = NULL;
@@ -45,6 +54,7 @@ void setup() {
   setupWiFi();
 }
 
+// Core 1 loop
 void loop() {
   WiFiClient wifiClient;
   HTTPClient httpClient;
@@ -64,11 +74,12 @@ void loop() {
     Serial.print("Current state: ");
     Serial.println(currentState);
   }
-  sleep(2); // Wait between state requests
+  sleep(2); // Wait between state requests to avoid flooding the server
 }
 
 //==============================================================================
 
+// Core 0 loop
 void sendLoop(void* parameters) {
   WiFiClient wifiClient;
   HTTPClient httpClient;
@@ -94,8 +105,10 @@ void sendLoop(void* parameters) {
         break;
       }
     }
+    // Proceed to optical transmission
     sendMessage(messageData, blinkingFrequency.toFloat());
   }
+  // Cleanup if loop breaks
   SEND_LOOP_HANDLE = NULL;
   vTaskDelete(NULL);
   digitalWrite(LIGHT_PIN, LOW);
@@ -133,7 +146,9 @@ void sendMessage(const String &messageData, const float &blinkingFrequency) {
   digitalWrite(DEBUG_LED_PIN, HIGH);
   Serial.println("Sending message data: " + messageData);
 
+  // Time in microseconds for each bit
   const auto bitWaitTime = static_cast<unsigned long>(SAMPLE_RATE / blinkingFrequency);  // Time in microseconds for each bit
+  
   //unsigned long startTime = micros();
 
   for (const auto messageByte : messageData) {
