@@ -1,3 +1,10 @@
+/**
+ * TEIDESAT Dummies - Receiver Firmware
+ * Runs on an ESP32 WROOM 32
+ * - Core 1 dedicates entirely to high-speed digital reading at 1MHz
+ * - Core 0 asynchronously packages and sends the data over Wi-Fi via HTTP POST
+ */
+
 #include <SPI.h>
 #include <WiFi.h>
 #include <WiFiClient.h>
@@ -14,22 +21,23 @@
 #define SPI_SCK (18)
 #define SPI_CS (5)
 
-#define SIGNAL_PIN (5)
+#define SIGNAL_PIN (5) // Photodiode input
 
-#define SAMPLE_RATE (1000000)  // 1 MHz
-#define BUFFER_SIZE (1024)
-#define CIRCULAR_BUFFER_SIZE (4096)  // Tamaño total del buffer circular
+#define SAMPLE_RATE (1000000)        // 1 MHz target sampling rate
+#define BUFFER_SIZE (1024)           // Samples per HTTP payload
+#define CIRCULAR_BUFFER_SIZE (4096)  // Total size of the ring buffer (4 payloads)
 
 //==============================================================================
 
 const String wifiSsid = WIFI_SSID;
 const String wifiPassword = WIFI_PASSWORD;
-const auto * const serverHostname = SERVER_HOSTNAME;  // Raspberry Pi IP
+const auto * const serverHostname = SERVER_HOSTNAME;  // Backend server IP
 constexpr int serverPort = SERVER_PORT;
 const String binaryEndpoint = serverHostname + String("/receive_binary");
 
 WiFiClient wifiClient;
 spi_device_handle_t spiDeviceHandle;
+
 std::array<uint16_t, CIRCULAR_BUFFER_SIZE>circularBuffer;
 std::atomic_ushort packageCounter(0);
 volatile size_t bufferHeadIndex = 0;
@@ -51,6 +59,7 @@ String postRequest(WiFiClient& wifiClient, HTTPClient& httpClient, const String&
                    size_t size);
 void readPhotorresistor();
 bool ensureWiFiConnected();
+
 //==============================================================================
 
 void setup() {
@@ -60,10 +69,12 @@ void setup() {
   Serial.println("Starting wifi");
   // setupSPI();
   setupWiFi();
+
   xTaskCreatePinnedToCore(sendBuffer, "sendBuffer", 2048, nullptr, 1, &sendBufferHandler, 0);
 }
 
-void loop() { // Loop uses core 1
+// Core 1 loop by default
+void loop() {
   //reconnectWiFi();
   //readADC();
   readPhotorresistor();
@@ -71,6 +82,7 @@ void loop() { // Loop uses core 1
 
 //==============================================================================
 
+// Calculate a simple XOR checksum for the given data
 uint16_t calculateChecksum(const uint16_t *pData, const size_t length) {
   uint16_t checksum = 0;
 
@@ -105,7 +117,7 @@ void setupSPI() {
       .post_cb = spiTransmissionCompletedCallback
   };
 
-  spi_bus_initialize(HSPI_HOST, &spiBusConfig, SPI_DMA_CH_AUTO);  // Activar canal DMA
+  spi_bus_initialize(HSPI_HOST, &spiBusConfig, SPI_DMA_CH_AUTO);
   spi_bus_add_device(HSPI_HOST, &spiDeviceInterfaceConfig, &spiDeviceHandle);
 }
 
@@ -113,9 +125,9 @@ void readADC() {
   spi_transaction_t spiTransaction = {};
 
   memset(&spiTransaction, 0, sizeof(spiTransaction));
-  spiTransaction.length = BUFFER_SIZE * 16;  // 16 bits por muestra
+  spiTransaction.length = BUFFER_SIZE * 16;  // 16 bits per sample
   spiTransaction.rx_buffer = &circularBuffer[bufferHeadIndex];
-  spiTransaction.flags = SPI_TRANS_USE_RXDATA;  // Asegurar uso de DMA
+  spiTransaction.flags = SPI_TRANS_USE_RXDATA;  // Ensure DMA usage
   spi_device_queue_trans(spiDeviceHandle, &spiTransaction, portMAX_DELAY);
 
   bufferHeadIndex = (bufferHeadIndex + BUFFER_SIZE) % CIRCULAR_BUFFER_SIZE;
@@ -163,9 +175,11 @@ void reconnectWiFi() {
   setupWiFi();
 }
 
+// Core 0
 void sendBuffer(void *params) {
   while (true) {
     delay(1);
+    // Process all pending packages if Core 1 has filled them
     while (packageCounter != 0) {
       uint16_t checksum = calculateChecksum(
           &circularBuffer[bufferTailIndex],
@@ -241,7 +255,7 @@ void readPhotorresistor() {
       // Wait time between reads
       delayMicroseconds(1);
     }
-    //Serial.print(currentValue);
+    // Serial.print(currentValue);
     circularBuffer[bufferHeadIndex++] = currentValue;
     if (bufferHeadIndex % BUFFER_SIZE == 0) {
       Serial.println( " Finished package");
