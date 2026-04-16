@@ -48,8 +48,16 @@ bool ensureWiFiConnected();
 void setup() {
   pinMode(LIGHT_PIN, OUTPUT);
   pinMode(DEBUG_LED_PIN, OUTPUT);
-  Serial.begin(9600);
+  Serial.begin(115200);
   disableCore0WDT();
+
+  // Quick LED test: blink LIGHT_PIN 3 times to verify hardware wiring and pin
+  for (int i = 0; i < 3; ++i) {
+    digitalWrite(LIGHT_PIN, HIGH);
+    delay(300);
+    digitalWrite(LIGHT_PIN, LOW);
+    delay(300);
+  }
 
   setupWiFi();
 }
@@ -74,7 +82,7 @@ void loop() {
     Serial.print("Current state: ");
     Serial.println(currentState);
   }
-  sleep(2); // Wait between state requests to avoid flooding the server
+  delay(2000); // Wait between state requests to avoid flooding the server
 }
 
 //==============================================================================
@@ -109,9 +117,10 @@ void sendLoop(void* parameters) {
     sendMessage(messageData, blinkingFrequency.toFloat());
   }
   // Cleanup if loop breaks
+  // Turn off the light, clear handle, then delete this task
+  digitalWrite(LIGHT_PIN, LOW);
   SEND_LOOP_HANDLE = NULL;
   vTaskDelete(NULL);
-  digitalWrite(LIGHT_PIN, LOW);
 }
 
 void setupWiFi() {
@@ -123,9 +132,9 @@ void setupWiFi() {
   WiFi.begin(wifiSsid, wifiPassword);
   Serial.println("Connecting to WiFi...");
 
-  while (WiFiClass::status() != WL_CONNECTED) {
+  while (WiFi.status() != WL_CONNECTED) {
     Serial.print("  ...Status code: ");
-    Serial.println(WiFiClass::status());
+    Serial.println(WiFi.status());
     delay(500);
   }
 
@@ -133,13 +142,13 @@ void setupWiFi() {
 }
 
 bool ensureWiFiConnected() {
-  if (WiFiClass::status() == WL_CONNECTED) {
+  if (WiFi.status() == WL_CONNECTED) {
     return true;
   }
 
   Serial.println("WiFi disconnected, reconnecting...");
   setupWiFi();
-  return WiFiClass::status() == WL_CONNECTED;
+  return WiFi.status() == WL_CONNECTED;
 }
 
 void sendMessage(const String &messageData, const float &blinkingFrequency) {
