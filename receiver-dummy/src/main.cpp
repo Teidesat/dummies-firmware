@@ -255,7 +255,7 @@ void readPhotorresistor() {
       // Wait time between reads
       delayMicroseconds(1);
     }
-    // Serial.print(currentValue);
+    //Serial.print(currentValue,BIN);
     circularBuffer[bufferHeadIndex++] = currentValue;
     if (bufferHeadIndex % BUFFER_SIZE == 0) {
       Serial.println( " Finished package");
