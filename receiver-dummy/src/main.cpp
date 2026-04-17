@@ -27,6 +27,10 @@
 #define BUFFER_SIZE (1024)           // Samples per HTTP payload
 #define CIRCULAR_BUFFER_SIZE (4096)  // Total size of the ring buffer (4 payloads)
 
+IPAddress localIP(10, 42, 100, 10);  // Local IP address
+IPAddress gatewayIP(10, 42, 0, 2);   // Gateway IP address
+IPAddress subnetMask(255, 255, 0, 0); // Subnet mask
+
 //==============================================================================
 
 const String wifiSsid = WIFI_SSID;
@@ -46,14 +50,18 @@ volatile bool bufferIsReady = false;
 unsigned long lastReconnectionAttempt = 0;
 TaskHandle_t sendBufferHandler = NULL;
 
+constexpr unsigned long kReconnectIntervalMs = 5000;
+constexpr int kWiFiConnectTimeoutMs = 15000;
+
 //==============================================================================
 
 uint16_t calculateChecksum(const uint16_t *pData, size_t length);
 void IRAM_ATTR spiTransmissionCompletedCallback(spi_transaction_t *trans);
 void setupSPI();
 void readADC();
-void setupWiFi();
-void reconnectWiFi();
+bool setupWiFi();
+bool reconnectWiFi();
+bool connectWiFiWithTimeout();
 void sendBuffer(void *);
 String postRequest(WiFiClient& wifiClient, HTTPClient& httpClient, const String& targetUrl, uint8_t* payload,
                    size_t size);
@@ -63,7 +71,7 @@ bool ensureWiFiConnected();
 //==============================================================================
 
 void setup() {
-  Serial.begin(9600);
+  Serial.begin(115200);
 
   pinMode(SIGNAL_PIN, INPUT);
   Serial.println("Starting wifi");
@@ -75,7 +83,7 @@ void setup() {
 
 // Core 1 loop by default
 void loop() {
-  //reconnectWiFi();
+  reconnectWiFi();
   //readADC();
   readPhotorresistor();
 }
@@ -134,45 +142,74 @@ void readADC() {
   sendBuffer(nullptr);
 }
 
-void setupWiFi() {
+bool setupWiFi() {
+  WiFiClient().stop();
   WiFi.persistent(false);
-  WiFi.mode(WIFI_STA);
-  WiFi.setMinSecurity(WIFI_AUTH_WPA_PSK);
   WiFi.disconnect(true, true);
+  WiFi.mode(WIFI_OFF);
   delay(250);
+  WiFi.mode(WIFI_STA);
+  delay(250);
+  WiFi.setSleep(false);
+  WiFi.setMinSecurity(WIFI_AUTH_WPA_PSK);
+
+
+
+  if (!connectWiFiWithTimeout()) {
+    Serial.println("WiFi connect timeout.");
+    WiFi.disconnect(true, true);
+    //WiFi.mode(WIFI_OFF);
+    //delay(500);
+    return false;
+  }
+  return true;
+}
+
+bool connectWiFiWithTimeout() {
+  if(!WiFi.config(localIP, gatewayIP, subnetMask)) {
+    Serial.println("STA Failed to configure");
+    return false;
+  }
+
   WiFi.begin(wifiSsid, wifiPassword);
   Serial.print("Connecting to WiFi...");
 
-  while (WiFiClass::status() != WL_CONNECTED) {
+  const unsigned long connectStart = millis();
+
+  while (WiFi.status() != WL_CONNECTED) {
     Serial.print('.');
     delay(500);
+
+    if (millis() - connectStart >= kWiFiConnectTimeoutMs) {
+      Serial.println(" timeout");
+      return false;
+    }
   }
 
   Serial.println("WiFi connection established.");
-  //wifiClient.connect(serverHostname, serverPort);
+  return true;
 }
 
 bool ensureWiFiConnected() {
-  if (WiFiClass::status() == WL_CONNECTED) {
+  if (WiFi.status() == WL_CONNECTED) {
     return true;
   }
 
-  reconnectWiFi();
-  return WiFiClass::status() == WL_CONNECTED;
+  return reconnectWiFi();
 }
 
-void reconnectWiFi() {
+bool reconnectWiFi() {
   if (
-      (WiFiClass::status() == WL_CONNECTED)
-      || (millis() - lastReconnectionAttempt <= 5000)
+      (WiFi.status() == WL_CONNECTED)
+      || (millis() - lastReconnectionAttempt <= kReconnectIntervalMs)
   ) {
-    return;
+    return true;
   }
 
   Serial.println("WiFi connection lost, trying to reconnect...");
   lastReconnectionAttempt = millis();
-  WiFi.disconnect();
-  setupWiFi();
+  WiFi.disconnect(true, true);
+  return setupWiFi();
 }
 
 // Core 0
@@ -214,10 +251,12 @@ String postRequest(WiFiClient& wifiClient, HTTPClient& httpClient, const String&
   Serial.println("Sending http request");
 
   if (!ensureWiFiConnected()) {
+    Serial.println("Error: Post not send. WiFi Disconnect");
     return "Error";
   }
 
   httpClient.setReuse(false);
+  //httpClient.addHeader("Connection", "close");
 
   if (!httpClient.begin(wifiClient, targetUrl)) {
     Serial.println("Failed to initialize URL");
@@ -242,6 +281,7 @@ String postRequest(WiFiClient& wifiClient, HTTPClient& httpClient, const String&
   }
 
   httpClient.end();
+  //wifiClient.stop();
   return String(responseCode);
 }
 
@@ -251,14 +291,14 @@ void readPhotorresistor() {
     for (int i = 15; i >= 0; --i) {
       const int readBit = digitalRead(SIGNAL_PIN) ? HIGH : LOW;
       currentValue |= readBit << i;
-      Serial.print(readBit ? 1 : 0);
+      //Serial.print(readBit ? 1 : 0);
       // Wait time between reads
       delayMicroseconds(1);
     }
     //Serial.print(currentValue,BIN);
     circularBuffer[bufferHeadIndex++] = currentValue;
     if (bufferHeadIndex % BUFFER_SIZE == 0) {
-      Serial.println( " Finished package");
+      //Serial.println( " Finished package");
       packageCounter++;
       if (bufferHeadIndex == CIRCULAR_BUFFER_SIZE) {
         bufferHeadIndex = 0;
