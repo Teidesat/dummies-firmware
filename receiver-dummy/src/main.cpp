@@ -22,12 +22,10 @@
 #define SPI_CS (5)
 
 #define SIGNAL_PIN (5) // Photodiode input
-#define STATUS_LED_PIN (2) // Built-in LED in most ESP32 DevKit boards
 
 #define SAMPLE_RATE (1000000)        // 1 MHz target sampling rate
 #define BUFFER_SIZE (1024)           // Samples per HTTP payload
 #define CIRCULAR_BUFFER_SIZE (4096)  // Total size of the ring buffer (4 payloads)
-#define LED_PULSE_MS (80)            // Visible blink duration on RX package
 
 //==============================================================================
 
@@ -46,7 +44,6 @@ volatile size_t bufferHeadIndex = 0;
 volatile size_t bufferTailIndex = 0;
 volatile bool bufferIsReady = false;
 unsigned long lastReconnectionAttempt = 0;
-unsigned long ledPulseUntilMs = 0;
 TaskHandle_t sendBufferHandler = NULL;
 
 //==============================================================================
@@ -62,8 +59,6 @@ String postRequest(WiFiClient& wifiClient, HTTPClient& httpClient, const String&
                    size_t size);
 void readPhotorresistor();
 bool ensureWiFiConnected();
-void triggerRxLedPulse();
-void updateRxLedState();
 
 //==============================================================================
 
@@ -71,9 +66,6 @@ void setup() {
   Serial.begin(9600);
 
   pinMode(SIGNAL_PIN, INPUT);
-  pinMode(STATUS_LED_PIN, OUTPUT);
-  digitalWrite(STATUS_LED_PIN, LOW);
-
   Serial.println("Starting wifi");
   // setupSPI();
   setupWiFi();
@@ -103,18 +95,6 @@ uint16_t calculateChecksum(const uint16_t *pData, const size_t length) {
 
 void IRAM_ATTR spiTransmissionCompletedCallback(spi_transaction_t *trans) {
   bufferIsReady = true;
-}
-
-void triggerRxLedPulse() {
-  ledPulseUntilMs = millis() + LED_PULSE_MS;
-  digitalWrite(STATUS_LED_PIN, HIGH);
-}
-
-void updateRxLedState() {
-  if (ledPulseUntilMs != 0 && millis() >= ledPulseUntilMs) {
-    digitalWrite(STATUS_LED_PIN, LOW);
-    ledPulseUntilMs = 0;
-  }
 }
 
 void setupSPI() {
@@ -267,8 +247,6 @@ String postRequest(WiFiClient& wifiClient, HTTPClient& httpClient, const String&
 
 void readPhotorresistor() {
   while (true) {
-    updateRxLedState();
-
     uint16_t currentValue = 0; // Next value to insert in the buffer.
     for (int i = 15; i >= 0; --i) {
       const int readBit = digitalRead(SIGNAL_PIN) ? HIGH : LOW;
@@ -282,7 +260,6 @@ void readPhotorresistor() {
     if (bufferHeadIndex % BUFFER_SIZE == 0) {
       Serial.println( " Finished package");
       packageCounter++;
-      triggerRxLedPulse();
       if (bufferHeadIndex == CIRCULAR_BUFFER_SIZE) {
         bufferHeadIndex = 0;
       }
