@@ -153,32 +153,20 @@ bool ensureWiFiConnected() {
 
 void sendMessage(const String &messageData, const float &blinkingFrequency) {
   digitalWrite(DEBUG_LED_PIN, HIGH);
-  Serial.println("Sending message data: " + messageData);
+  Serial.println("Sending binary data payload...");
 
-  // Time in microseconds for each bit
-  const auto bitWaitTime = static_cast<unsigned long>(SAMPLE_RATE / blinkingFrequency);  // Time in microseconds for each bit
-  
-  //unsigned long startTime = micros();
+  const auto bitWaitTime = static_cast<unsigned long>(SAMPLE_RATE / blinkingFrequency); 
 
   for (const auto messageByte : messageData) {
-    // Serial.println("Current char: " + String(messageByte));
-    for (int i{7}; i >= 0; --i) {
-      int currentBit = (messageByte >> i) & 1;
-      // Serial.println("Current bit: " + String(currentBit));
-      digitalWrite(LIGHT_PIN, currentBit == 1 ? HIGH : LOW);  // Send the bit
-      /*
-      while ((micros() - startTime) < bitWaitTime) {
-        // Wait for the bit time to pass
-      }
-      */
-      delayMicroseconds(bitWaitTime);
-    //startTime += bitWaitTime;
-    }
+    Serial.println(messageByte);
+    digitalWrite(LIGHT_PIN, messageByte == '1' ? HIGH : LOW);
+    delayMicroseconds(bitWaitTime);
   }
 
   Serial.println("Data sent");
   digitalWrite(DEBUG_LED_PIN, LOW);
 }
+
 
 
 String getRequest(WiFiClient& wifiClient, HTTPClient& httpClient, const String& targetUrl) {
