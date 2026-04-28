@@ -93,35 +93,31 @@ void sendLoop(void* parameters) {
   HTTPClient httpClient;
   String messageData;
   String blinkingFrequency;
+  
   while (true) {
-    { // Scope for the lock guard
-      vTaskDelay(1);
-      std::lock_guard<std::mutex> guard(HTTP_CLIENT_IN_USE);
-      messageData = getRequest(wifiClient, httpClient, messageDataUrl);
-      Serial.println("Message data: " + messageData);
-
-      if (messageData == "") {
-        Serial.println("Error getting message data");
-        break;
-      }
-
-      blinkingFrequency = getRequest(wifiClient, httpClient, blinkingFrequencyUrl);
-      Serial.println("Blinking frequency: " + blinkingFrequency);
-
-      if (blinkingFrequency == "") {
-        Serial.println("Error getting blinking frequency");
-        break;
-      }
+    vTaskDelay(1);
+    
+    std::lock_guard<std::mutex> guard(HTTP_CLIENT_IN_USE);
+    
+    messageData = getRequest(wifiClient, httpClient, messageDataUrl);
+    if (messageData == "") {
+      break;
     }
-    // Proceed to optical transmission
+
+    blinkingFrequency = getRequest(wifiClient, httpClient, blinkingFrequencyUrl);
+    if (blinkingFrequency == "") {
+      break;
+    }
+    
     sendMessage(messageData, blinkingFrequency.toFloat());
   }
+  
   // Cleanup if loop breaks
-  // Turn off the light, clear handle, then delete this task
   digitalWrite(LIGHT_PIN, LOW);
   SEND_LOOP_HANDLE = NULL;
   vTaskDelete(NULL);
 }
+
 
 void setupWiFi() {
   WiFi.persistent(false);                 // Don't save WiFi credentials to flash
@@ -157,15 +153,23 @@ void sendMessage(const String &messageData, const float &blinkingFrequency) {
 
   const auto bitWaitTime = static_cast<unsigned long>(SAMPLE_RATE / blinkingFrequency); 
 
+  unsigned long nextBitTime = micros(); 
+
   for (const auto messageByte : messageData) {
-    Serial.println(messageByte);
     digitalWrite(LIGHT_PIN, messageByte == '1' ? HIGH : LOW);
-    delayMicroseconds(bitWaitTime);
+    
+    nextBitTime += bitWaitTime;
+    
+    while (micros() < nextBitTime) {
+    }
   }
 
+  digitalWrite(LIGHT_PIN, LOW);
+  
   Serial.println("Data sent");
   digitalWrite(DEBUG_LED_PIN, LOW);
 }
+
 
 
 
