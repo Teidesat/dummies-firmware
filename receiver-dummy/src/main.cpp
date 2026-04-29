@@ -256,11 +256,11 @@ void readPhotorresistor() {
     for (int i = 15; i >= 0; --i) {
       const int readBit = digitalRead(SIGNAL_PIN) ? HIGH : LOW;
       currentValue |= readBit << i;
-      Serial.print(readBit ? 1 : 0);
+      //Serial.print(readBit ? 1 : 0);
       // Wait time between reads
       delayMicroseconds(1);
     }
-    //Serial.print(currentValue);
+    //Serial.print(currentValue); 
     circularBuffer[sampleIndex] = currentValue;
     bufferHeadIndex = (bufferHeadIndex + 1) % CIRCULAR_BUFFER_SIZE;
 
