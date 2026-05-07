@@ -1,7 +1,7 @@
 #include <SPI.h>
-#include <WiFi.h>
-#include <WiFiClient.h>
-#include <HTTPClient.h>
+//#include <WiFi.h>
+//#include <WiFiClient.h>
+//#include <HTTPClient.h>
 #include <array>
 
 #include "freertos/FreeRTOS.h"
@@ -22,15 +22,23 @@
 #define BUFFER_SIZE (1024)
 #define CIRCULAR_BUFFER_SIZE (4096)  // Tamaño total del buffer circular
 
-//==============================================================================
+//=======================================PINS RASPBERRY=========================
+#define UART_TX_PIN (17)
+#define UART_RX_PIN (16)
+#define UART_BAUD_RATE (115200)
 
+constexpr uint8_t FRAME_MAGIC[] = {'D', 'U', 'M', 'M'};
+
+
+//==============================================================================
+/*
 const String wifiSsid = "receiver-dummy";
 const String wifiPassword = "receiver-dummy";
 const auto * const serverHostname = "http://10.42.0.2:5001";  // Raspberry Pi IP
 constexpr int serverPort = 5001;
 const String binaryEndpoint = serverHostname + String("/receive_binary");
-
 WiFiClient wifiClient;
+*/
 spi_device_handle_t spiDeviceHandle;
 std::array<uint16_t, CIRCULAR_BUFFER_SIZE>circularBuffer;
 volatile size_t bufferHeadIndex = 0;
@@ -48,20 +56,25 @@ uint16_t calculateChecksum(const uint16_t *pData, size_t length);
 void IRAM_ATTR spiTransmissionCompletedCallback(spi_transaction_t *trans);
 void setupSPI();
 void readADC();
-void setupWiFi();
-void reconnectWiFi();
+//void setupWiFi();
+//void reconnectWiFi();
 void sendBuffer(void *);
-String postRequest(WiFiClient& wifiClient, HTTPClient& httpClient, const String& targetUrl, uint8_t* payload,
-                   size_t size);
-void readPhotorresistor();
-bool ensureWiFiConnected();
+//String postRequest(WiFiClient& wifiClient, HTTPClient& httpClient, const String& targetUrl, uint8_t* payload, size_t size);
+//void readPhotorresistor();
+//bool ensureWiFiConnected();
+
+//==============================================================================
+void setupSerialLink();
+uint16_t calculateChecksumBytes(const uint8_t *payload, size_t size);
+void sendPackageToPi(const uint8_t *payload, size_t size);
 //==============================================================================
 
 void setup() {
   Serial.begin(9600);
+  setupSerialLink();
 
   pinMode(SIGNAL_PIN, INPUT);
-  Serial.println("Starting wifi");
+  Serial.println("Starting connection...");
   // setupSPI();
 
   // Queue carries the start index of each complete package ready to send.
@@ -73,7 +86,7 @@ void setup() {
     }
   }
 
-  setupWiFi();
+  //setupWiFi();
   xTaskCreatePinnedToCore(sendBuffer, "sendBuffer", 2048, nullptr, 1, &sendBufferHandler, 0);
 }
 
@@ -136,6 +149,7 @@ void readADC() {
   sendBuffer(nullptr);
 }
 
+/*
 void setupWiFi() {
   WiFi.persistent(false);
   WiFi.mode(WIFI_STA);
@@ -175,7 +189,35 @@ void reconnectWiFi() {
   lastReconnectionAttempt = millis();
   WiFi.disconnect();
   setupWiFi();
+}*/
+
+void setupSerialLink() {
+  Serial2.begin(UART_BAUD_RATE, SERIAL_8N1, UART_RX_PIN, UART_TX_PIN);
 }
+
+uint16_t calculateChecksumBytes(const uint8_t *payload, const size_t size) {
+  uint16_t checksum = 0;
+
+  for (size_t i = 0; i < size; i += 2) {
+    const uint16_t word = static_cast<uint16_t>(payload[i])
+                          | (static_cast<uint16_t>(payload[i + 1]) << 8);
+    checksum ^= word;
+  }
+
+  return checksum;
+}
+
+void sendPackageToPi(const uint8_t *payload, const size_t size) {
+  const uint16_t payloadSize = static_cast<uint16_t>(size);
+  const uint16_t checksum = calculateChecksumBytes(payload, size);
+
+  Serial2.write(FRAME_MAGIC, sizeof(FRAME_MAGIC));
+  Serial2.write(reinterpret_cast<const uint8_t *>(&payloadSize), sizeof(payloadSize));
+  Serial2.write(payload, size);
+  Serial2.write(reinterpret_cast<const uint8_t *>(&checksum), sizeof(checksum));
+  Serial2.flush();
+}
+
 
 void sendBuffer(void *params) {
   size_t packageStartIndex = 0;
@@ -191,6 +233,11 @@ void sendBuffer(void *params) {
         BUFFER_SIZE
     );
 
+    sendPackageToPi(
+        reinterpret_cast<const uint8_t *>(&circularBuffer[packageStartIndex]),
+        BUFFER_SIZE * sizeof(uint16_t)
+    );
+
     //if (wifiClient.connected()) {
       /*
       wifiClient.write(
@@ -200,12 +247,13 @@ void sendBuffer(void *params) {
       wifiClient.write(
           reinterpret_cast<uint8_t *>(&checksum),
           sizeof(checksum)
-      );*/
+      );
       HTTPClient httpClient;
 
       postRequest(wifiClient, httpClient, binaryEndpoint,
                   reinterpret_cast<uint8_t *>(&circularBuffer[packageStartIndex]), BUFFER_SIZE * sizeof(uint16_t));
-      //wifiClient.flush();  // Asegura que los datos se envíen inmediatamente
+      */
+                  //wifiClient.flush();  // Asegura que los datos se envíen inmediatamente
     //}
 
     (void) checksum;
