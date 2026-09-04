@@ -143,17 +143,11 @@ void readADC() {
 }
 
 bool setupWiFi() {
-  WiFiClient().stop();
   WiFi.persistent(false);
-  WiFi.disconnect(true, true);
-  WiFi.mode(WIFI_OFF);
-  delay(250);
   WiFi.mode(WIFI_STA);
-  delay(250);
-  WiFi.setSleep(false);
   WiFi.setMinSecurity(WIFI_AUTH_WPA_PSK);
-
-
+  WiFi.disconnect(true, true);
+  delay(250);
 
   if (!connectWiFiWithTimeout()) {
     Serial.println("WiFi connect timeout.");
