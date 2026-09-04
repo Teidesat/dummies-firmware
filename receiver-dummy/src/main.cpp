@@ -23,7 +23,7 @@
 
 #define SIGNAL_PIN (5) // Photodiode input
 
-#define SAMPLE_RATE (100)        // 1 MHz target sampling rate
+#define SAMPLE_RATE (100000)        // 1 MHz target sampling rate
 #define BUFFER_SIZE (1024)           // Samples per HTTP payload
 #define CIRCULAR_BUFFER_SIZE (4096)  // Total size of the ring buffer (4 payloads)
 
