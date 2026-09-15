@@ -33,11 +33,13 @@ IPAddress subnetMask(255, 255, 0, 0); // Subnet mask
 
 //==============================================================================
 
+// Defined at 'secrets.h' file
 const String wifiSsid = WIFI_SSID;
 const String wifiPassword = WIFI_PASSWORD;
-const auto * const serverHostname = SERVER_HOSTNAME;  // Backend server IP
-constexpr int serverPort = SERVER_PORT;
-const String binaryEndpoint = serverHostname + String("/receive_binary");
+const String apiServerBaseUrl = API_SERVER_BASE_URL;
+
+// Endpoint at receiver server
+const String binaryEndpoint = apiServerBaseUrl + "/receive_binary";
 
 WiFiClient wifiClient;
 spi_device_handle_t spiDeviceHandle;

@@ -21,11 +21,12 @@
 
 //==============================================================================
 
+// Defined at 'secrets.h' file
 const String wifiSsid = WIFI_SSID;
 const String wifiPassword = WIFI_PASSWORD;
-const String apiServerBaseUrl = API_SERVER_BASE_URL;  // Change to server's IP address
+const String apiServerBaseUrl = API_SERVER_BASE_URL;
 
-// Endpoints for polling
+// Endpoint at transmitter server
 const String messageDataUrl = apiServerBaseUrl + "/get_message_data";
 const String blinkingFrequencyUrl = apiServerBaseUrl + "/get_blinking_frequency";
 const String firmwareStateUrl = apiServerBaseUrl + "/firmware_state";
