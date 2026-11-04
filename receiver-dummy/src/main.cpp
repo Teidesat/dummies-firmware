@@ -12,6 +12,12 @@
 #include <atomic>
 
 #include "driver/spi_master.h"
+#include "driver/rmt_rx.h"
+#include "esp_err.h"
+#include "esp_log.h"
+#include "freertos/semphr.h"
+#include "freertos/FreeRTOS.h"
+
 #include "secrets.h"
 
 //==============================================================================
@@ -26,6 +32,8 @@
 #define SAMPLE_RATE (100000)        // 1 MHz target sampling rate
 #define BUFFER_SIZE (1024)           // Samples per HTTP payload
 #define CIRCULAR_BUFFER_SIZE (4096)  // Total size of the ring buffer (4 payloads)
+
+#define RMT_MEM_BLOCK_SYMBOLS 128
 
 IPAddress localIP(10, 42, 100, 10);  // Local IP address
 IPAddress gatewayIP(10, 42, 0, 2);   // Gateway IP address
@@ -55,6 +63,20 @@ TaskHandle_t sendBufferHandler = NULL;
 constexpr unsigned long kReconnectIntervalMs = 5000;
 constexpr int kWiFiConnectTimeoutMs = 15000;
 
+// RMT related
+static rmt_channel_handle_t rx_chan = nullptr;
+static rmt_symbol_word_t rx_buffer[RMT_MEM_BLOCK_SYMBOLS];
+static size_t received_symbols_len = 0;
+rmt_receive_config_t ook_config_2khz = { // TODO: Adaptative in the future
+  .signal_range_min_ns = 50000,
+  .signal_range_max_ns = 8000000,
+};
+SemaphoreHandle_t rx_semaphore = nullptr;
+#define RMT_TICK_FREQ_HZ 1000000UL
+#define SIGNAL_FREQ_HZ 2000UL
+
+constexpr uint32_t TICKS_PER_BIT = (RMT_TICK_FREQ_HZ / SIGNAL_FREQ_HZ);
+
 //==============================================================================
 
 uint16_t calculateChecksum(const uint16_t *pData, size_t length);
@@ -68,7 +90,10 @@ void sendBuffer(void *);
 String postRequest(WiFiClient& wifiClient, HTTPClient& httpClient, const String& targetUrl, uint8_t* payload,
                    size_t size);
 void readPhotorresistor();
+void readPhotodiode();
 bool ensureWiFiConnected();
+void setupRMT();
+bool IRAM_ATTR rmt_rx_done_callback(rmt_channel_handle_t rx_chan, const rmt_rx_done_event_data_t *edata, void *user_data);
 
 //==============================================================================
 
@@ -79,6 +104,7 @@ void setup() {
   Serial.println("Starting wifi");
   // setupSPI();
   setupWiFi();
+  setupRMT();
 
   xTaskCreatePinnedToCore(sendBuffer, "sendBuffer", 2048, nullptr, 1, &sendBufferHandler, 0);
 }
@@ -87,7 +113,8 @@ void setup() {
 void loop() {
   reconnectWiFi();
   //readADC();
-  readPhotorresistor();
+  //readPhotorresistor();
+  readPhotodiode();
 }
 
 //==============================================================================
@@ -103,7 +130,7 @@ uint16_t calculateChecksum(const uint16_t *pData, const size_t length) {
   return checksum;
 }
 
-void IRAM_ATTR spiTransmissionCompletedCallback(spi_transaction_t *trans) {
+void spiTransmissionCompletedCallback(spi_transaction_t *trans) {
   bufferIsReady = true;
 }
 
@@ -292,7 +319,8 @@ void readPhotorresistor() {
       delayMicroseconds(1);
     }
     //Serial.print(currentValue,BIN);
-    circularBuffer[bufferHeadIndex++] = currentValue;
+    circularBuffer[bufferHeadIndex] = currentValue;
+    bufferHeadIndex += 1;
     if (bufferHeadIndex % BUFFER_SIZE == 0) {
       //Serial.println( " Finished package");
       packageCounter++;
@@ -300,5 +328,109 @@ void readPhotorresistor() {
         bufferHeadIndex = 0;
       }
     }
+  }
+}
+
+void setupRMT() {
+  rx_semaphore = xSemaphoreCreateBinary();
+
+  rmt_rx_channel_config_t rx_chan_config = {};
+  rx_chan_config.gpio_num = (gpio_num_t)SIGNAL_PIN; // Data pin
+  rx_chan_config.clk_src = RMT_CLK_SRC_DEFAULT; // Default clock (80 MHz)
+  rx_chan_config.resolution_hz = RMT_TICK_FREQ_HZ;
+  rx_chan_config.mem_block_symbols = RMT_MEM_BLOCK_SYMBOLS;  
+  rx_chan_config.flags.invert_in = false; 
+  rx_chan_config.flags.with_dma = false; 
+
+  ESP_ERROR_CHECK(rmt_new_rx_channel(&rx_chan_config, &rx_chan));
+
+  // Register callback for processing
+  rmt_rx_event_callbacks_t cbk = {
+    .on_recv_done = rmt_rx_done_callback,
+  };
+
+  ESP_ERROR_CHECK(rmt_rx_register_event_callbacks(rx_chan, &cbk, NULL));
+  ESP_ERROR_CHECK(rmt_enable(rx_chan));
+  ESP_ERROR_CHECK(rmt_receive(rx_chan, rx_buffer, sizeof(rx_buffer), &ook_config_2khz));
+}
+
+bool rmt_rx_done_callback(rmt_channel_handle_t rx_chan, const rmt_rx_done_event_data_t *edata, void *user_data)
+{
+  BaseType_t high_task_wakeup = pdFALSE;
+  
+  received_symbols_len = edata->num_symbols;
+
+  xSemaphoreGiveFromISR(rx_semaphore, &high_task_wakeup);
+
+  return high_task_wakeup == pdTRUE;
+}
+
+void readPhotodiode() {
+  if (xSemaphoreTake(rx_semaphore, portMAX_DELAY) == pdTRUE) { 
+    static uint16_t currentWord = 0;
+    static uint8_t bitPosition = 0;
+
+    for (size_t i = 0; i < received_symbols_len; i++) {
+      // First level data
+      uint32_t ticks0 = rx_buffer[i].duration0;
+      uint8_t level0  = rx_buffer[i].level0;
+
+      // 50% Tolerance reception
+      uint32_t numBits0 = (ticks0 + (TICKS_PER_BIT / 2)) / TICKS_PER_BIT;
+
+      for (uint32_t b = 0; b < numBits0; b++) {
+        if (level0 == 1) {
+          currentWord |= (1 << (15 - bitPosition));
+        } // TODO: Check if currentWord |= (level0 << (15 - bitPosition)); is faster
+        bitPosition++;
+
+        // Send word when full
+        if (bitPosition == 16) {
+          circularBuffer[bufferHeadIndex] = currentWord;
+          bufferHeadIndex = (bufferHeadIndex + 1) % CIRCULAR_BUFFER_SIZE;
+          if (bufferHeadIndex % BUFFER_SIZE == 0) {
+            packageCounter++;
+          }
+          currentWord = 0;
+          bitPosition = 0;
+        }
+      }
+
+      // Second level data
+      uint32_t ticks1 = rx_buffer[i].duration1;
+      uint8_t level1  = rx_buffer[i].level1;
+
+      uint32_t numBits1 = (ticks1 + (TICKS_PER_BIT / 2)) / TICKS_PER_BIT;
+
+      for (uint32_t b = 0; b < numBits1; b++) {
+        if (level1 == 1) {
+          currentWord |= (1 << (15 - bitPosition));
+        }
+        bitPosition++;
+
+        if (bitPosition == 16) {
+          circularBuffer[bufferHeadIndex] = currentWord;
+          bufferHeadIndex = (bufferHeadIndex + 1) % CIRCULAR_BUFFER_SIZE;
+          if (bufferHeadIndex % BUFFER_SIZE == 0) {
+            packageCounter++;
+          }
+          currentWord = 0;
+          bitPosition = 0;
+        }
+      }
+    }
+
+    // if the last bits don't make a full word
+    if (bitPosition > 0) {
+      circularBuffer[bufferHeadIndex] = currentWord;
+      bufferHeadIndex = (bufferHeadIndex + 1) % CIRCULAR_BUFFER_SIZE;
+      
+      packageCounter++;
+
+      currentWord = 0;
+      bitPosition = 0;
+    }
+
+    ESP_ERROR_CHECK(rmt_receive(rx_chan, rx_buffer, sizeof(rx_buffer), &ook_config_2khz));
   }
 }
