@@ -68,7 +68,7 @@ static rmt_channel_handle_t rx_chan = nullptr;
 static rmt_symbol_word_t rx_buffer[RMT_MEM_BLOCK_SYMBOLS];
 static size_t received_symbols_len = 0;
 rmt_receive_config_t ook_config_2khz = { // TODO: Adaptative in the future
-  .signal_range_min_ns = 50000,
+  .signal_range_min_ns = 3000,  // Min value should not be higher than 3187 ns
   .signal_range_max_ns = 8000000,
 };
 SemaphoreHandle_t rx_semaphore = nullptr;
